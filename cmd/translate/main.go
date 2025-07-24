@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"go-ollama/internal/markdown"
-	"go-ollama/internal/ollama"
+	"llm_translate/internal/markdown"
+	"llm_translate/internal/ollama"
 	"log"
 	"os"
 	"strings"

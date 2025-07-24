@@ -1,4 +1,4 @@
-module go-ollama
+module llm_translate
 
 go 1.23.0
 
