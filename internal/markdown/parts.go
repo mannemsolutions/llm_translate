@@ -105,7 +105,12 @@ func (p Part) CharCount() int {
 	return len(p.String())
 }
 
-// CharRatio returns the ratio between number of words in pre and post Part
+// CharRatio returns the ratio between number of characters in pre and post Part
 func (p Part) CharRatio(other Part) float32 {
 	return float32(p.CharCount()) / float32(other.CharCount())
+}
+
+// TrimSpace returns a Part, with all leading and trailing white space removed
+func (p Part) TrimSpace() Part {
+	return Part(strings.TrimSpace(p.String()))
 }

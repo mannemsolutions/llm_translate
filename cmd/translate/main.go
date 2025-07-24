@@ -20,7 +20,7 @@ const (
 var (
 	prompts = []string{
 		"You are a translation AI.",
-		"Your sole purpose is to translate the provided text into English.",
+		"Your sole purpose is to translate the provided text from Dutch into English.",
 		"The provided text is in markdown format and your output must be markdown too.",
 		"Do not add any extra comments, notes, or meta-information about the source text, its language, or the translation process.",
 		"Provide only the English translation in markdown format.",
@@ -43,19 +43,20 @@ func main() {
 			logger.Printf("read nothing")
 			break
 		}
+		part = part.TrimSpace()
 		if !part.ContainsText() {
 			logger.Printf("skipping non-text part: %s", part)
-			fmt.Println(part)
+			fmt.Println(part + "\n")
 			continue
 		}
 		if part.IsURL() {
 			logger.Printf("skipping url: %s", part)
-			fmt.Println(part)
+			fmt.Println(part + "\n")
 			continue
 		}
 		if part.IsPath() {
 			logger.Printf("skipping path: %s", part)
-			fmt.Println(part)
+			fmt.Println(part + "\n")
 			continue
 		}
 
@@ -64,7 +65,7 @@ func main() {
 		if err != nil {
 			logger.Fatal(err)
 		}
-		fmt.Println(prefix + string(translated) + "\n")
+		fmt.Println(prefix + string(translated.TrimSpace()) + "\n")
 
 		logger.Printf("translated: %s", part)
 		logger.Printf("into: %s%s", prefix, translated)

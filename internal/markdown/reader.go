@@ -9,51 +9,40 @@ import (
 
 // Reader is an object that can read (e.a. stdin) and return one part at a time
 type Reader struct {
-	reader *bufio.Reader
+	scanner *bufio.Scanner
 }
 
 // NewReader returns an initialized Reader
-func NewReader(stream *bufio.Reader) Reader {
+func NewReader(stream *bufio.Scanner) Reader {
 	return Reader{
-		reader: stream,
+		scanner: stream,
 	}
 }
 
 // NewFromStdin returns an initialized Reader, which runs from stdin
 func NewFromStdin() Reader {
-	return NewReader(bufio.NewReader(os.Stdin))
+	return NewReader(bufio.NewScanner(os.Stdin))
 }
 
 // Read reads line by line until it found an empty line, and returns a Part
 // from these lines
-func (r Reader) Read() (*Part, error) {
+func (r Reader) Read() (p Part, err error) {
 	var (
-		line    string
 		lines   []string
 		readErr error
 	)
-	if r.reader == nil {
-		return nil, io.EOF
+	if r.scanner == nil {
+		return p, io.EOF
 	}
-	for {
-		line, readErr = r.reader.ReadString('\n')
-		if readErr != nil {
-			// last part
-			if readErr == io.EOF {
-				r.reader = nil
-				if len(line) > 0 {
-					lines = append(lines, line)
-				}
-				break
-			}
-			return nil, readErr
-		} else if line == "" {
+	for r.scanner.Scan() {
+		line := r.scanner.Text()
+		if line == "" {
 			part := Part(strings.Join(lines, "\n"))
-			return &part, readErr
+			return part, readErr
 		}
 		lines = append(lines, line)
-		break
 	}
+	lines = append(lines, r.scanner.Text())
 	part := Part(strings.Join(lines, "\n"))
-	return &part, readErr
+	return part, readErr
 }
