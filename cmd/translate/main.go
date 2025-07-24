@@ -1,145 +1,112 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
 	"fmt"
+	"go-ollama/internal/markdown"
+	"go-ollama/internal/ollama"
 	"log"
-	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 )
 
-type Request struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
-}
-
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type Response struct {
-	Model              string    `json:"model"`
-	CreatedAt          time.Time `json:"created_at"`
-	Message            Message   `json:"message"`
-	Done               bool      `json:"done"`
-	TotalDuration      int64     `json:"total_duration"`
-	LoadDuration       int       `json:"load_duration"`
-	PromptEvalCount    int       `json:"prompt_eval_count"`
-	PromptEvalDuration int       `json:"prompt_eval_duration"`
-	EvalCount          int       `json:"eval_count"`
-	EvalDuration       int64     `json:"eval_duration"`
-}
-
 const (
-	llmModel = "phi4"
-	llmURL   = "http://localhost:11434/api/chat"
+	llmModel     = "phi4"
+	llmURL       = "http://localhost:11434/api/chat"
+	llmCharRatio = 2.0
+	llmWordRatio = 2.0
 )
 
 var (
 	prompts = []string{
 		"You are a translation AI.",
 		"Your sole purpose is to translate the provided text into English.",
+		"The provided text is in markdown format and your output must be markdown too.",
 		"Do not add any extra comments, notes, or meta-information about the source text, its language, or the translation process.",
-		"Provide only the English translation.",
-		"For parts you fail to translate, keep the original text",
+		"Provide only the English translation in markdown format.",
+		"For parts you fail to translate, keep the original.",
 	}
 	prompt        = strings.Join(prompts, " ")
-	containsText  = regexp.MustCompile("[a-zA-Z]")
-	justText      = regexp.MustCompile(`[a-zA-Z :.,/\0-9%?!]+`)
-	isURL         = regexp.MustCompile(`https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)`)
-	isPath        = regexp.MustCompile(`^(.+)\/([^\/]+)$`)
-	remoteAiNotes = regexp.MustCompile(`\n?\(Note: .*?\.\)`)
+	llmConnection = ollama.Connection{Model: llmModel, Prompt: prompt, URL: llmURL}
 )
 
-func cleanse(in string) (cleansed string) {
-	out := []byte(in)
-	out = remoteAiNotes.ReplaceAll([]byte(out), []byte{})
-	return string(out)
-}
-
 func main() {
-	var (
-		readError error
-		line      string
-	)
 	start := time.Now()
 	logger := log.New(os.Stderr, "", 0)
-	reader := bufio.NewReader(os.Stdin)
 
+	mdReader := markdown.NewFromStdin()
+
+	logger.Printf("started")
 	for {
-		if readError != nil {
+		part, readErr := mdReader.Read()
+		if part.String() == "" {
+			logger.Printf("read nothing")
 			break
 		}
-		line, readError = reader.ReadString('\n')
-		orgLine := line
-		allParts := justText.FindAllString(line, -1)
-		if allParts == nil {
-			fmt.Println(line)
+		if !part.ContainsText() {
+			logger.Printf("skipping non-text part: %s", part)
+			fmt.Println(part)
 			continue
 		}
-		for _, part := range allParts {
-			if !containsText.Match([]byte(part)) {
-				continue
-			}
-			if isURL.MatchString(part) {
-				continue
-			}
-			if isPath.MatchString(part) {
-				continue
-			}
-			translated, err := translate(part)
-			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
-			}
-			translated = cleanse(translated)
-			line = strings.ReplaceAll(line, part, translated)
-			/*
-				if strings.HasPrefix(resp.Message.Content, "I'm unable to translate the text") {
-					fmt.Println(line)
-					continue
-				}
-			*/
+		if part.IsURL() {
+			logger.Printf("skipping url: %s", part)
+			fmt.Println(part)
+			continue
 		}
-		fmt.Println(line)
-		logger.Printf("%s > %s", orgLine, line)
+		if part.IsPath() {
+			logger.Printf("skipping path: %s", part)
+			fmt.Println(part)
+			continue
+		}
+
+		prefix, text := part.HeaderText()
+		translated, err := translate(markdown.Part(text))
+		if err != nil {
+			logger.Fatal(err)
+		}
+		fmt.Println(prefix + string(translated) + "\n")
+
+		logger.Printf("translated: %s", part)
+		logger.Printf("into: %s%s", prefix, translated)
+		if readErr != nil {
+			break
+		}
 	}
 	logger.Printf("Completed in %v", time.Since(start))
 }
 
-func translate(toTranslate string) (translated string, err error) {
-	req := Request{
-		Model:  llmModel,
-		Stream: false,
-		Messages: []Message{
-			{Role: "system", Content: prompt},
-			{Role: "user", Content: toTranslate},
-		},
-	}
-	js, err := json.Marshal(&req)
+func translate(toTranslate markdown.Part) (translated markdown.Part, err error) {
+	logger := log.New(os.Stderr, "", 0)
+	tl, err := llmConnection.Translate(string(toTranslate))
 	if err != nil {
-		return "", err
+		logger.Fatalln(err)
 	}
-	client := http.Client{}
-	httpReq, err := http.NewRequest(http.MethodPost, llmURL, bytes.NewReader(js))
-	if err != nil {
-		return "", err
+	translated = markdown.Part(tl).Cleansed()
+
+	charRatio := translated.CharRatio(toTranslate)
+	logger.Printf("char ratio: %f", charRatio)
+	if charRatio > llmCharRatio {
+		logger.Printf("skipping due to char ratio (%d,%d,%f)",
+			toTranslate.CharCount(),
+			translated.CharCount(),
+			translated.CharRatio(toTranslate),
+		)
+		logger.Printf("part: %s", toTranslate)
+		logger.Printf("llm translation: %s", translated)
+		return toTranslate, nil
 	}
-	httpResp, err := client.Do(httpReq)
-	if err != nil {
-		return "", err
-	} else if httpResp.StatusCode != 200 {
-		return "", fmt.Errorf("http response %v", httpResp)
+
+	wordRatio := translated.WordRatio(toTranslate)
+	logger.Printf("word ratio: %f", wordRatio)
+	if translated.WordRatio(toTranslate) > llmCharRatio {
+		logger.Printf("skipping due to char ratio (%d,%d,%f)",
+			toTranslate.WordCount(),
+			translated.WordCount(),
+			translated.WordRatio(toTranslate),
+		)
+		logger.Printf("part: %s", toTranslate)
+		logger.Printf("llm translation: %s", translated)
+		return toTranslate, nil
 	}
-	defer httpResp.Body.Close()
-	ollamaResp := Response{}
-	err = json.NewDecoder(httpResp.Body).Decode(&ollamaResp)
-	return ollamaResp.Message.Content, err
+	return translated, nil
 }
